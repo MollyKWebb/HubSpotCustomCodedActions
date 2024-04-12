@@ -1,0 +1,65 @@
+ const axios = require('axios');
+
+exports.main = async (event, callback) => {
+  const dealId = event.inputFields['dealId'];
+
+  if (!dealId) {
+    console.log('Deal ID is undefined.');
+    return callback({ outputFields: { lineItemIds: [] } }); // Early exit if dealId is undefined
+  }
+
+  // Fetch associated line items for the deal using the correct associations endpoint
+  const associatedLineItemsEndpoint = `https://api.hubapi.com/crm/v3/objects/deals/${dealId}/associations/line_item`;
+  let lineItems = [];
+  try {
+    const response = await axios.get(associatedLineItemsEndpoint, {
+      headers: {
+        'Authorization': `Bearer ${process.env.your_secret_name}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    console.log(`Successfully retrieved associated line items for deal ${dealId}`);
+    const lineItemIds = response.data.results.map(item => item.id);
+
+    // Fetch details for all line items in a single request (if API supports batch read)
+    if (lineItemIds.length > 0) {
+      const detailsEndpoint = `https://api.hubapi.com/crm/v3/objects/line_items/batch/read`;
+      const detailsResponse = await axios.post(detailsEndpoint, {
+        inputs: lineItemIds.map(id => ({ id })),
+        properties: ['name'] // Specify other properties you're interested in
+      }, {
+        headers: {
+          'Authorization': `Bearer ${process.env.your_secret_name}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      lineItems = detailsResponse.data.results;
+    }
+  } catch (error) {
+    console.log(`Error while getting associated line items for deal ${dealId}: ${error}`);
+    return callback({ outputFields: { lineItemIds: [] } });
+  }
+
+  // Filter line items to delete based on name "LINE ITEM NAME HERE"
+  const lineItemsToDelete = lineItems.filter(item => item.properties.name === "LINE ITEM NAME HERE").map(item => ({ id: item.id }));
+
+  // Proceed to delete the filtered line items
+  if (lineItemsToDelete.length > 0) {
+    const deleteEndpoint = `https://api.hubapi.com/crm/v3/objects/line_items/batch/archive`;
+    try {
+      await axios.post(deleteEndpoint, { inputs: lineItemsToDelete }, {
+        headers: {
+          'Authorization': `Bearer ${process.env.your_secret_name}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      console.log(`Successfully deleted ${lineItemsToDelete.length} line items from deal ${dealId}`);
+    } catch (error) {
+      console.log(`Error while deleting specified line items for deal ${dealId}: ${error}`);
+    }
+  } else {
+    console.log("No line items matched the criteria for deletion.");
+  }
+
+  callback({ outputFields: { lineItemIds: lineItemsToDelete.map(item => item.id) } });
+};
