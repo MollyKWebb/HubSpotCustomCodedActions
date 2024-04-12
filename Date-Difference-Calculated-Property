@@ -1,0 +1,21 @@
+if(
+    is_known([properties.recent_conversion_date]),
+    if(
+        [properties.ticktocktoday] - [properties.recent_conversion_date] < (1 * 24 * 3600 * 1000), 
+        "Less than 1 day ago",
+        if(
+            [properties.ticktocktoday] - [properties.recent_conversion_date] < (3 * 24 * 3600 * 1000), 
+            "1-2 days ago",
+            if(
+                [properties.ticktocktoday] - [properties.recent_conversion_date] < (6 * 24 * 3600 * 1000), 
+                "3-5 days ago",
+                if(
+                    [properties.ticktocktoday] - [properties.recent_conversion_date] < (11 * 24 * 3600 * 1000), 
+                    "6-10 days ago",
+                    "Over 10 days ago"
+                )
+            )
+        )
+    ),
+    "No recent conversion date"
+)
