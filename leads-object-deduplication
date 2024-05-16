@@ -1,6 +1,25 @@
 // Include the Contact Record ID property in the "Property to include in code" section 
 // The Leads API is basically identical to the Contacts API if you need to make any changes 
-const axios = require('axios'); 
+const axios = require('axios');
+
+// Define Axios headers as a constant
+const axiosHeaders = {
+  'Content-Type': 'application/json',
+  'Authorization': `Bearer ${process.env.YOUR_SECRET_HERE}`
+};
+
+// Custom comparison function for sorting leads
+function compareLeads(a, b) {
+  const stageOrder = ['new-stage-id', 'attempting-stage-id', 'connected-stage-id', 'qualified-stage-id', 'unqualified-stage-id'];
+  const stageDifference = stageOrder.indexOf(a.hs_pipeline_stage) - stageOrder.indexOf(b.hs_pipeline_stage);
+
+  if (stageDifference !== 0) {
+    return stageDifference; // Sort by pipeline stage first
+  } else {
+    // If in the same stage, sort by last modified date in descending order
+    return new Date(b.hs_lastmodifieddate) - new Date(a.hs_lastmodifieddate);
+  }
+}
 
 exports.main = async (event, callback) => {
   const contactId = event.inputFields['hs_object_id'];
@@ -19,53 +38,66 @@ exports.main = async (event, callback) => {
           value: contactId
         }]
       }],
-      sorts: [{
-        propertyName: 'hs_lastmodifieddate', // Sorting by last modified date
-        direction: 'DESCENDING'
-      }],
-      properties: ['hs_lead_name', 'hs_lastmodifieddate'], // Including leadname and lastmodifieddate in the properties to be returned
+      properties: ['id', 'hs_lead_name', 'hs_lastmodifieddate', 'hs_pipeline_stage'],
     };
 
-    const response = await axios({
-      method: 'post',
-      url: `https://api.hubapi.com/crm/v3/objects/leads/search`,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.YOUR_SECRET}`
-      },
-      data: searchPayload
-    });
-
-    if (response.data.total > 0) {
-      console.log(`Found ${response.data.total} leads associated with contact ${contactId}.`);
-
-      // Assuming the first result is the most recently updated lead due to DESCENDING sort
-      const mostRecentLeadId = response.data.results[0].id;
-
-      // Iterate over all found leads, skip the first (most recent), and delete the rest
-      for (let i = 1; i < response.data.results.length; i++) { // Start from index 1 to skip the most recent lead
-        const leadId = response.data.results[i].id;
-        try {
-          await axios({
-            method: 'delete',
-            url: `https://api.hubapi.com/crm/v3/objects/leads/${leadId}`,
-            headers: {
-              'Authorization': `Bearer ${process.env.YOUR_SECRET}`,
-              'Content-Type': 'application/json'
-            }
-          });
-          console.log(`Deleted lead ${leadId}`);
-        } catch (error) {
-          console.error(`Error deleting lead ${leadId}:`, error);
-        }
+    let response;
+    try {
+      response = await axios({
+        method: 'post',
+        url: `https://api.hubapi.com/crm/v3/objects/leads/search`,
+        headers: axiosHeaders,
+        data: searchPayload
+      });
+      console.log(`Successfully fetched leads. Total found: ${response.data.total}`);
+    } catch (error) {
+      // Handle rate limiting and other errors during search
+      if (error.response && error.response.status === 429) {
+        console.error('Rate limit hit during search, throwing an error to trigger a retry.');
+        throw error('Rate limit hit during search');
+      } else {
+        console.error(`Error searching for leads: ${error.response ? error.response.data : error.message}`);
+        return callback({ outputFields: { message: 'Error searching for leads.' } });
       }
+    }
 
-      console.log(`Kept only the most recently updated lead with ID: ${mostRecentLeadId}`);
+    if (response.data.total > 1) {
+      const qualifiedLeads = response.data.results.filter(lead => lead.properties.hs_pipeline_stage !== 'unqualified-stage-id');
+      if (qualifiedLeads.length > 1) {
+        const sortedLeads = qualifiedLeads.sort(compareLeads);
+        console.log('Sorted Leads:');
+        sortedLeads.forEach(lead => {
+          console.log({
+            id: lead.id,
+            stage: lead.properties ? lead.properties.hs_pipeline_stage : 'Stage not found',
+            lastModified: lead.properties ? lead.properties.hs_lastmodifieddate : 'Last modified date not found'
+          });
+        });
+        for (let i = 1; i < sortedLeads.length; i++) {
+          try {
+            await axios({
+              method: 'delete',
+              url: `https://api.hubapi.com/crm/v3/objects/leads/${sortedLeads[i].id}`,
+              headers: axiosHeaders
+            });
+            console.log(`Deleted lead ${sortedLeads[i].id} because it was not the most advanced in the pipeline or the most recently updated.`);
+          } catch (error) {
+            if (error.response && error.response.status === 429) {
+              console.error('Rate limit hit during deletion, throwing an error to trigger a retry.');
+              throw error('Rate limit hit during deletion');
+            } else {
+              console.error(`Failed to delete lead with ID: ${sortedLeads[i].id}. Error: ${error.response ? error.response.data : error.message}`);
+            }
+          }
+        }
+      } else {
+        console.log('No qualified leads found for deletion.');
+      }
     } else {
-      console.log('No leads found for this contact.');
+      console.log('No leads found for deletion.');
     }
   } catch (error) {
-    console.error(`An error occurred while searching for and deleting leads: ${error}`);
-    return callback({ outputFields: { message: 'An error occurred while searching for and deleting leads.' } });
+    console.error(`An unexpected error occurred: ${error.message}`);
+    return callback({ outputFields: { message: 'An unexpected error occurred.' } });
   }
 };
