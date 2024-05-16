@@ -8,7 +8,7 @@ exports.main = async (event, callback) => {
     return callback({ outputFields: { lineItemIds: [] } }); // Early exit if dealId is undefined
   }
 
-  // Fetch associated line items for the deal using the correct associations endpoint
+  // Fetch associated line items for the deal
   const associatedLineItemsEndpoint = `https://api.hubapi.com/crm/v3/objects/deals/${dealId}/associations/line_item`;
   let lineItems = [];
   try {
@@ -21,12 +21,12 @@ exports.main = async (event, callback) => {
     console.log(`Successfully retrieved associated line items for deal ${dealId}`);
     const lineItemIds = response.data.results.map(item => item.id);
 
-    // Fetch details for all line items in a single request (if API supports batch read)
+    // Fetch details for all line items in a single request
     if (lineItemIds.length > 0) {
       const detailsEndpoint = `https://api.hubapi.com/crm/v3/objects/line_items/batch/read`;
       const detailsResponse = await axios.post(detailsEndpoint, {
         inputs: lineItemIds.map(id => ({ id })),
-        properties: ['name'] // Specify other properties you're interested in
+        properties: ['name'] // Specify any other properties here
       }, {
         headers: {
           'Authorization': `Bearer ${process.env.your_secret_name}`,
